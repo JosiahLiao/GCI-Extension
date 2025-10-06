@@ -1,0 +1,10 @@
+{
+    "manifest_version": 3,
+    "name": "CredibleHelper (Analyze & Summarize)",
+    "version": "0.1.2",
+    "description": "Checks webpage credibility heuristics and generates a longer summary with key points.",
+    "permissions": ["scripting", "activeTab", "storage"],
+    "host_permissions": ["http://localhost:4000/*", "http://127.0.0.1:4000/*"],
+    "action": { "default_popup": "popup.html" }
+  }
+  
