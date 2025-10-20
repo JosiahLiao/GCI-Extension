@@ -2,25 +2,30 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>CredibleHelper</title>
+  <title>Ad‑Aware Screen Reader</title>
   <style>
-    body{font-family: system-ui, Arial; margin:10px; width:340px}
+    body{font-family:system-ui,Arial; margin:12px; width:360px}
+    label{display:block; margin:8px 0}
+    input[type=range]{width:100%}
     button{width:100%; padding:8px; margin:6px 0}
-    .score{font-weight:700}
-    .ok{color:#14833b}
-    .warn{color:#c77d00}
-    .bad{color:#b00020}
-    .small{font-size:12px;color:#555}
-    .section{margin:10px 0}
-    #result{max-height:380px; overflow:auto; border-top:1px solid #ddd; padding-top:8px}
-    ul{padding-left:18px}
-    code{font-family: ui-monospace, Menlo, monospace}
+    small{color:#555}
   </style>
 </head>
 <body>
-  <button id="analyze">Analyze credibility & summarize</button>
-  <div id="status" class="small"></div>
-  <div id="result"></div>
+  <button id="analyze">Analyze & Highlight (Alt+A)</button>
+  <button id="readMain">Read main content (Alt+R)</button>
+  <button id="readSel">Read selection</button>
+  <button id="pause">Pause/Resume (Alt+P)</button>
+  <button id="stop">Stop (Alt+S)</button>
+
+  <hr/>
+  <label>Rate <input id="rate" type="range" min="0.5" max="2.0" step="0.1"></label>
+  <label>Pitch <input id="pitch" type="range" min="0.5" max="2.0" step="0.1"></label>
+  <label>Volume <input id="volume" type="range" min="0.1" max="1.0" step="0.1"></label>
+  <label>Voice <select id="voice"></select></label>
+  <label><input id="useChromeTTS" type="checkbox"> Use chrome.tts (requires additional permission)</label>
+  <small>Tip: Use the Options page to add site-specific ad selectors.</small>
+
   <script src="popup.js"></script>
 </body>
 </html>

@@ -1,62 +1,54 @@
-async function getPageData() {
-    const [tab] = await chrome.tabs.query({active:true, currentWindow:true});
-    const [{result}] = await chrome.scripting.executeScript({
-      target: {tabId: tab.id},
-      func: () => {
-        const text = (document.body && document.body.innerText || '').replace(/\s+/g,' ').slice(0, 120000);
-        const meta = {};
-        document.querySelectorAll('meta[name], meta[property]').forEach(m=>{
-          const k = (m.getAttribute('name')||m.getAttribute('property')||'').toLowerCase();
-          const v = (m.getAttribute('content')||'').trim();
-          if (k && v) meta[k] = v;
-        });
-        const links = Array.from(document.querySelectorAll('a[href]')).map(a=>a.getAttribute('href'));
-        const headings = Array.from(document.querySelectorAll('h1,h2,h3')).map(h=>h.textContent.trim()).filter(Boolean);
-        const hasRefs = /references|citations|sources|bibliography/i.test(document.body.innerText || '');
-        const scripts = Array.from(document.scripts||[]).map(s=>s.src||'inline');
-        return {url:location.href, host:location.host, protocol:location.protocol, title:document.title, meta, links, headings, hasRefs, scripts, text};
-      }
-    });
-    return result;
-  }
-  
-  function colorClass(score){
-    if(score>=75) return 'ok';
-    if(score>=45) return 'warn';
-    return 'bad';
-  }
-  
-  async function analyze(){
-    const status = document.getElementById('status');
-    const resultDiv = document.getElementById('result');
-    status.textContent = 'Sending page to local analyzer on http://127.0.0.1:4000 ...';
-    resultDiv.innerHTML='';
-  
-    try{
-      const page = await getPageData();
-      const resp = await fetch('http://127.0.0.1:4000/api/analyze',{
-        method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(page)
-      });
-      const data = await resp.json();
-  
-      const cls = colorClass(data.credibility.score);
-      const factors = (data.credibility.factors||[]).map(f=>`<li>${f}</li>`).join('');
-      const bullets = (data.summary.key_points||[]).map(b=>`<li>${b}</li>`).join('');
-  
-      resultDiv.innerHTML = `
-        <div class='section'>
-          <div class='score ${cls}'>Credibility score: ${data.credibility.score}/100 — ${data.credibility.label}</div>
-          <div class='small'>Domain: <code>${data.domain}</code></div>
-        </div>
-        <div class='section'><b>Why this score:</b><ul>${factors}</ul></div>
-        <div class='section'><b>Key points:</b><ul>${bullets}</ul></div>
-        <div class='section'><b>Long summary (~250–350 words):</b><div>${data.summary.long}</div></div>
-      `;
-      status.textContent = '';
-    }catch(err){
-      status.textContent = 'Analyzer not found. Make sure it is running on http://127.0.0.1:4000';
-    }
-  }
-  
-  document.getElementById('analyze').addEventListener('click', analyze);
-  
+const DEFAULTS = { rate:1, pitch:1, volume:1, voiceURI:"", useChromeTTS:false };
+
+function loadVoices(select, selectedURI) {
+  const voices = speechSynthesis.getVoices();
+  select.innerHTML = `<option value="">System default</option>` +
+    voices.map(v => `<option value="${v.voiceURI}">${v.name} (${v.lang})</option>`).join("");
+  if (selectedURI) select.value = selectedURI;
+}
+
+function saveSettings(partial) {
+  chrome.storage.sync.get(DEFAULTS, (cfg) => {
+    const next = { ...DEFAULTS, ...cfg, ...partial };
+    chrome.storage.sync.set(next, () => chrome.tabs.query({active:true,currentWindow:true}, (tabs)=>{
+      if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "SETTINGS_UPDATED" });
+    }));
+  });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const rate = document.getElementById("rate");
+  const pitch = document.getElementById("pitch");
+  const volume = document.getElementById("volume");
+  const voice = document.getElementById("voice");
+  const useChromeTTS = document.getElementById("useChromeTTS");
+
+  chrome.storage.sync.get(DEFAULTS, (cfg) => {
+    rate.value = cfg.rate; pitch.value = cfg.pitch; volume.value = cfg.volume; useChromeTTS.checked = !!cfg.useChromeTTS;
+    loadVoices(voice, cfg.voiceURI);
+  });
+
+  speechSynthesis.onvoiceschanged = () => loadVoices(voice, voice.value);
+
+  rate.addEventListener("input", () => saveSettings({ rate: parseFloat(rate.value) }));
+  pitch.addEventListener("input", () => saveSettings({ pitch: parseFloat(pitch.value) }));
+  volume.addEventListener("input", () => saveSettings({ volume: parseFloat(volume.value) }));
+  voice.addEventListener("change", () => saveSettings({ voiceURI: voice.value }));
+  useChromeTTS.addEventListener("change", () => saveSettings({ useChromeTTS: useChromeTTS.checked }));
+
+  document.getElementById("analyze").onclick = () => chrome.tabs.query({active:true,currentWindow:true}, (tabs)=>{
+    if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "ANALYZE" });
+  });
+  document.getElementById("readMain").onclick = () => chrome.tabs.query({active:true,currentWindow:true}, (tabs)=>{
+    if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "READ_MAIN" });
+  });
+  document.getElementById("readSel").onclick = () => chrome.tabs.query({active:true,currentWindow:true}, (tabs)=>{
+    if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "READ_SELECTION" });
+  });
+  document.getElementById("pause").onclick = () => chrome.tabs.query({active:true,currentWindow:true}, (tabs)=>{
+    if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "PAUSE_RESUME" });
+  });
+  document.getElementById("stop").onclick = () => chrome.tabs.query({active:true,currentWindow:true}, (tabs)=>{
+    if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "STOP" });
+  });
+});
