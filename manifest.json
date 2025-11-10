@@ -1,48 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Ad‑Aware Screen Reader",
-  "version": "1.2.0",
-  "description": "Reads the main content of a page, highlights key points, and runs on‑device credibility checks. No Node required.",
-  "minimum_chrome_version": "102",
+  "name": "Credible Reader",
+  "version": "6.0.0",
+  "description": "Be the fact-checker. Extract only the article body, investigate claims against trusted primary sources (gov, academic, wire services), and score 0\u2013100 with detailed explanations. No Wikipedia.",
+  "minimum_chrome_version": "114",
   "action": {
     "default_popup": "popup.html"
   },
   "permissions": [
     "storage",
     "activeTab",
+    "scripting",
     "contextMenus"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://api.crossref.org/*",
+    "https://eutils.ncbi.nlm.nih.gov/*",
+    "https://www.reuters.com/*",
+    "https://apnews.com/*",
+    "https://feeds.reuters.com/*",
+    "https://*.gov/*",
+    "https://*.who.int/*"
   ],
   "background": {
     "service_worker": "background.js"
-  },
-  "commands": {
-    "read_page": {
-      "suggested_key": {
-        "default": "Alt+R"
-      },
-      "description": "Read main content"
-    },
-    "pause_resume": {
-      "suggested_key": {
-        "default": "Alt+P"
-      },
-      "description": "Pause/Resume speaking"
-    },
-    "stop": {
-      "suggested_key": {
-        "default": "Alt+S"
-      },
-      "description": "Stop speaking"
-    },
-    "analyze": {
-      "suggested_key": {
-        "default": "Alt+A"
-      },
-      "description": "Analyze page & highlight key points"
-    }
   },
   "options_page": "options.html",
   "content_scripts": [
@@ -53,10 +34,24 @@
       "js": [
         "content.js"
       ],
-      "run_at": "document_idle",
       "css": [
         "content.css"
-      ]
+      ],
+      "run_at": "document_idle"
     }
-  ]
+  ],
+  "commands": {
+    "analyze_offline": {
+      "suggested_key": {
+        "default": "Alt+A"
+      },
+      "description": "Validate (offline heuristics)"
+    },
+    "analyze_online": {
+      "suggested_key": {
+        "default": "Alt+Shift+A"
+      },
+      "description": "Investigate (online primary sources)"
+    }
+  }
 }

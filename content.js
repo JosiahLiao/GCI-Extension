@@ -1,527 +1,225 @@
-// content.js — screen reader + key point highlighting + credibility checks
-// (No Node; all on-device heuristics.)
 
-const DEFAULT_SETTINGS = {
-  rate: 1.0, pitch: 1.0, volume: 1.0, voiceURI: "", useChromeTTS: false,
+// content.js — "We are the fact-checker": investigate claims against trusted sources (no Wikipedia)
+const CFG = { maxClaimLen: 260, maxClaims: 18 };
+
+const DEFAULTS = {
   skipSelectors: [
     "header, nav, aside, footer, dialog, [role=banner], [role=navigation], [role=complementary], [role=dialog], [aria-modal=true]",
-    "[aria-label*=ad], [aria-label*=Ad], [aria-label*=advert], [id*=ad], [class*=ad], [class*=ads], [class*=advert], [class*=sponsor], [id*=sponsor]",
-    "[class*=outbrain], [class*=taboola], [class*=teads], [class*=sharethrough], [class*=doubleclick], [class*=googlesyndication]",
-    "[class*=sticky], [class*=sidebar], [class*=promo], [class*=newsletter], [class*=signup], [class*=cookie]"
-  ],
-  minParagraphChars: 80,
-  maxChunkChars: 1200,
-  keyPointCount: 5
+    ".ad, .ads, [class*=advert i], [class*=sponsor i], [id*=ad i], [class*=promo i], [class*=newsletter i], [class*=cookie i]",
+    "[class*=outbrain i], [class*=taboola i], [class*=doubleclick i], [class*=sharethrough i], [class*=teads i]",
+    ".comments, #comments, [data-component='comments'], [role='complementary']",
+    ".sidebar, [class*=sidebar i], [class*=sticky i]"
+  ]
 };
 
-let SETTINGS = { ...DEFAULT_SETTINGS };
-let speaking = false, paused = false, currentUtterance = null, queue = [];
-let observer = null;
-
-const isHidden = (el) => !el || el.offsetParent === null || getComputedStyle(el).visibility === "hidden";
-
-function loadSettings() {
-  return new Promise((resolve) => {
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (cfg) => {
-      SETTINGS = { ...DEFAULT_SETTINGS, ...cfg };
-      resolve(SETTINGS);
-    });
+// ---------- Article extraction (content-dense only) ----------
+function isHidden(el){ return !el || el.offsetParent === null || getComputedStyle(el).visibility === "hidden"; }
+function textLen(el){ return (el.innerText || "").replace(/\s+/g," ").trim().length; }
+function elementCount(el){ return el.querySelectorAll("*").length || 1; }
+function densityScore(el){ return textLen(el) / elementCount(el); }
+function candidateSelectors(){ return [
+  "article","main article","main [role='article']","section[itemprop='articleBody']","[data-component='articleBody']",
+  ".article-body,.articleBody,.post-content,.entry-content,#article-body,#content article","main .content,.story-body,.body-copy"
+];}
+function getArticleRoot(){
+  const cands = new Set();
+  document.querySelectorAll(candidateSelectors().join(",")).forEach(n => { if(!isHidden(n)) cands.add(n); });
+  const main = document.querySelector("main") || document.body;
+  Array.from(main.querySelectorAll("section, div")).forEach(n => {
+    if (isHidden(n)) return;
+    if (n.matches(DEFAULTS.skipSelectors.join(","))) return;
+    if (textLen(n) > 800) cands.add(n);
   });
-}
-
-function getMainRoot() {
-  const main = document.querySelector("main, article, [role=main]");
-  if (main && !isHidden(main)) return main;
-  const candidates = Array.from(document.querySelectorAll("main, article, section, [role=main], [role=article], #content, .content, .post, .article, .entry, [itemprop=articleBody]"));
-  let best = null, bestLen = 0;
-  for (const el of candidates) {
-    if (isHidden(el)) continue;
-    const txt = el.innerText?.trim() || "";
-    if (txt.length > bestLen) { bestLen = txt.length; best = el; }
+  let best=null, bestScore=0;
+  for (const el of cands){
+    const score = densityScore(el);
+    if (score>bestScore){ bestScore=score; best=el; }
   }
-  return best || document.body;
+  return best || main;
 }
 
-function shouldSkip(el) {
-  if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
-  const skipRoles = new Set(["banner", "navigation", "complementary", "dialog", "menu", "search", "contentinfo", "alert", "tooltip"]);
-  const role = el.getAttribute("role");
-  if (role && skipRoles.has(role)) return true;
-  const aria = (el.getAttribute("aria-label") || "").toLowerCase();
-  if (/\b(ad|advert|advertisement|sponsored|promo)\b/.test(aria)) return true;
-  const cls = (el.className || "").toString().toLowerCase();
-  const id = (el.id || "").toLowerCase();
-  if (/(^|[^a-z])(ad|ads|advert|sponsor|promo|outbrain|taboola|sharethrough|doubleclick|teads)([^a-z]|$)/.test(cls + " " + id)) return true;
-  if (el.hidden || el.getAttribute("inert") !== null) return true;
-  if (el.closest("header, nav, aside, footer, dialog, [role=banner], [role=navigation], [role=complementary], [aria-modal=true]")) return true;
-  return false;
-}
-
-function collectTextNodes(el) {
-  const out = [];
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-    acceptNode(n) {
-      if (n.nodeType === Node.TEXT_NODE) {
-        const s = n.nodeValue.replace(/\s+/g, " ").trim();
-        if (!s) return NodeFilter.FILTER_REJECT;
-        const p = n.parentElement;
-        if (!p || isHidden(p) || shouldSkip(p)) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      } else if (n.nodeType === Node.ELEMENT_NODE) {
-        const tag = n.tagName;
-        if (["SCRIPT","STYLE","NOSCRIPT","TEMPLATE","IFRAME","SVG","CANVAS"].includes(tag)) return NodeFilter.FILTER_REJECT;
-        if (shouldSkip(n)) return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_SKIP;
-      }
-      return NodeFilter.FILTER_SKIP;
+// ---------- Claim extraction ----------
+function splitSentences(t){ return t.replace(/\s+/g," ").split(/(?<=[.!?])\s+(?=[A-Z0-9“"'\[])/).map(s=>s.trim()).filter(Boolean); }
+function collectArticleText(root){
+  const out=[];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n){
+      const p=n.parentElement;
+      if(!p || isHidden(p) || p.matches(DEFAULTS.skipSelectors.join(","))) return NodeFilter.FILTER_REJECT;
+      const s=n.nodeValue.replace(/\s+/g," ").trim();
+      if (!s || s.length<3) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
     }
   });
-  let curr;
-  while ((curr = walker.nextNode())) if (curr.nodeType === Node.TEXT_NODE) out.push(curr);
-  return out;
+  let cur; while((cur=walker.nextNode())) out.push(cur.nodeValue);
+  return out.join(" ").replace(/\s+/g," ").trim();
 }
-
-function extractCleanText(root) {
-  const nodes = collectTextNodes(root);
-  return nodes.map(n => n.nodeValue).join(" ").replace(/\s+/g, " ").trim();
-}
-
-// --- Screen reading ---
-function chunk(text, maxLen) {
-  const chunks = [];
-  let i = 0;
-  while (i < text.length) {
-    let end = Math.min(text.length, i + maxLen);
-    const slice = text.slice(i, end);
-    const lastPeriod = slice.lastIndexOf(". ");
-    if (lastPeriod > i + maxLen * 0.6) end = i + lastPeriod + 2;
-    chunks.push(text.slice(i, end));
-    i = end;
+function extractClaims(root){
+  const sents = splitSentences(collectArticleText(root));
+  const claims=[];
+  for (const s of sents){
+    if (s.length<28 || s.length>CFG.maxClaimLen) continue;
+    const hasNum = /\b\d{1,3}(?:,\d{3})*(?:\.\d+)?%?\b/.test(s);
+    const hasYear = /\b(19|20)\d{2}\b/.test(s);
+    const hasEntity = /\b[A-Z][a-z]+(?:\s[A-Z][a-z]+){0,3}\b/.test(s);
+    const hasVerb = /\b(is|are|was|were|claims?|reports?|causes?|reduces?|increases?|leads?|results?|shows?)\b/i.test(s);
+    const notUI = !/subscribe|cookie|sign in|menu|share|read more|next|previous/i.test(s);
+    if (notUI && (hasNum || hasYear || hasEntity) && hasVerb) claims.push(s);
   }
-  return chunks;
+  return claims.slice(0, CFG.maxClaims);
 }
 
-function buildQueueFrom(root) {
-  const text = extractCleanText(root);
-  const paragraphs = text.split(/\n{2,}|(?<=[.!?])\s{2,}/).map(s => s.trim()).filter(s => s.length >= SETTINGS.minParagraphChars);
-  return paragraphs.flatMap(p => chunk(p, SETTINGS.maxChunkChars));
+// ---------- Investigation (background relay) ----------
+function investigate(query){
+  return new Promise(res => chrome.runtime.sendMessage({ type:"INVESTIGATE", query }, res));
 }
 
-function speakNext() {
-  if (paused || speaking) return;
-  const next = queue.shift();
-  if (!next) return;
-  if (SETTINGS.useChromeTTS && chrome.tts) {
-    speaking = true;
-    chrome.tts.speak(next, {
-      voiceName: SETTINGS.voiceURI || undefined,
-      rate: SETTINGS.rate, pitch: SETTINGS.pitch, volume: SETTINGS.volume,
-      onEvent: (e) => { if (e.type === "end" || e.type === "interrupted" || e.type === "cancelled") { speaking = false; speakNext(); } }
-    });
-  } else {
-    const u = new SpeechSynthesisUtterance(next);
-    u.rate = SETTINGS.rate; u.pitch = SETTINGS.pitch; u.volume = SETTINGS.volume;
-    if (SETTINGS.voiceURI) {
-      const voice = speechSynthesis.getVoices().find(v => v.voiceURI === SETTINGS.voiceURI || v.name === SETTINGS.voiceURI);
-      if (voice) u.voice = voice;
+// ---------- Evidence-based scoring ----------
+function extractNumbers(t){
+  return (t.match(/\b\d{1,3}(?:,\d{3})*(?:\.\d+)?%?\b/g) || []).map(x=>x.replace(/,/g,""));
+}
+function numericConcordance(claimNums, evidenceSnippet){
+  if (!claimNums.length) return 0;
+  const snums = extractNumbers(evidenceSnippet);
+  if (!snums.length) return 0;
+  let score = 0;
+  for (const c of claimNums){
+    const cval = parseFloat(c);
+    for (const s of snums){
+      const sval = parseFloat(s);
+      if (!isFinite(cval) || !isFinite(sval)) continue;
+      const relErr = Math.abs(cval - sval) / Math.max(1, Math.abs(cval));
+      if (relErr < 0.05) score += 2;        // within 5%
+      else if (relErr < 0.15) score += 1;   // within 15%
+      else if (relErr > 0.40) score -= 2;   // far off -> contradiction
     }
-    speaking = true;
-    u.onend = () => { speaking = false; speakNext(); };
-    u.onerror = () => { speaking = false; speakNext(); };
-    speechSynthesis.speak(u);
-    currentUtterance = u;
   }
+  return score;
+}
+function authorityWeight(source){
+  if (source==="CDC" || source==="NIH" || source==="NOAA") return 12;
+  if (source==="PubMed" || source==="CrossRef") return 10;
+  if (source==="Reuters" || source==="AP News") return 8;
+  return 4;
+}
+function scoreFromEvidence(claim, evidence){
+  let score = 50;
+  const reasons = [];
+  const claimNums = extractNumbers(claim);
+  let corroborations = 0, contradictions = 0, numericScore = 0, maxAuth = 0;
+  for (const ev of evidence){
+    const w = authorityWeight(ev.source);
+    maxAuth = Math.max(maxAuth, w);
+    // simple textual plausibility: overlap of key tokens
+    const tokClaim = claim.toLowerCase().split(/\W+/).filter(x=>x.length>3);
+    const t = (ev.title + " " + (ev.snippet||"")).toLowerCase();
+    const overlap = tokClaim.filter(x=>t.includes(x)).length;
+    if (overlap >= 3){ corroborations += 1; score += Math.min(10, w); reasons.push(`Corroborated by ${ev.source}: ${ev.title}`); }
+    const numC = numericConcordance(claimNums, ev.title + " " + (ev.snippet||""));
+    numericScore += numC;
+    if (numC < -1){ contradictions += 1; reasons.push(`Numbers conflict with ${ev.source}.`); }
+  }
+  if (corroborations >= 2) score += 10;
+  if (contradictions >= 1) score -= 15;
+  score += Math.max(-10, Math.min(10, numericScore));
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  const label = score>=75?"High":score<=45?"Low":"Medium";
+  return { score, label, reasons };
 }
 
-function stopSpeaking() {
-  queue = []; paused = false; speaking = false;
-  if (SETTINGS.useChromeTTS && chrome.tts) chrome.tts.stop();
-  else speechSynthesis.cancel();
-}
-function pauseResume() {
-  if (SETTINGS.useChromeTTS && chrome.tts) {
-    if (speaking) { chrome.tts.stop(); paused = true; speaking = false; }
-    else if (paused) { paused = false; speakNext(); }
-    return;
-  }
-  if (speechSynthesis.speaking && !speechSynthesis.paused) { speechSynthesis.pause(); paused = true; }
-  else if (speechSynthesis.paused) { speechSynthesis.resume(); paused = false; }
-}
-
-async function readSelection() {
-  await loadSettings();
-  const sel = window.getSelection();
-  const text = sel ? sel.toString().replace(/\s+/g, " ").trim() : "";
-  if (!text) return;
-  stopSpeaking();
-  queue = chunk(text, SETTINGS.maxChunkChars);
-  speakNext();
-}
-async function readMain() {
-  await loadSettings();
-  stopSpeaking();
-  const root = getMainRoot();
-  queue = buildQueueFrom(root);
-  speakNext();
-  if (observer) observer.disconnect();
-  observer = new MutationObserver((mutations) => {
-    const textMut = mutations.some(m => Array.from(m.addedNodes).some(n => n.nodeType === Node.TEXT_NODE || (n.nodeType === Node.ELEMENT_NODE && !shouldSkip(n))));
-    if (textMut && queue.length < 2 && !speechSynthesis.speaking) {
-      const more = buildQueueFrom(getMainRoot());
-      if (more.length) { queue = more; speakNext(); }
+// ---------- UI helpers ----------
+function ensurePanel(){ let p=document.querySelector('.cr-panel'); if(p) return p; p=document.createElement('div'); p.className='cr-panel'; document.body.appendChild(p); return p; }
+function badge(label){ const cls = label==="High"?"cr-high":label==="Low"?"cr-low":"cr-med"; return `<span class="cr-badge ${cls}">${label}</span>`; }
+function escapeHtml(s){return s.replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]))}
+function clearHighlights(){ document.querySelectorAll(".cr-highlight").forEach(el=>{ const p=el.parentNode; while(el.firstChild) p.insertBefore(el.firstChild, el); p.removeChild(el); }); }
+function highlightClaim(root, sentence){
+  const nodes=[]; const walker=document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode:n => {
+    const p=n.parentElement; if(!p||isHidden(p)||p.matches(DEFAULTS.skipSelectors.join(","))) return NodeFilter.FILTER_REJECT;
+    const s=n.nodeValue.replace(/\s+/g," ").trim(); return s?NodeFilter.FILTER_ACCEPT:NodeFilter.FILTER_REJECT;
+  }}); let cur; while((cur=walker.nextNode())) nodes.push(cur);
+  const needle = sentence.slice(0,120).replace(/\s+/g," ");
+  const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"i");
+  for (const t of nodes){
+    const hay=t.nodeValue.replace(/\s+/g," ");
+    const i=hay.search(re);
+    if(i>=0){
+      const full=t.nodeValue;
+      const before=document.createTextNode(full.slice(0,i));
+      const mid=document.createTextNode(full.slice(i,i+needle.length));
+      const after=document.createTextNode(full.slice(i+needle.length));
+      const span=document.createElement("span"); span.className="cr-highlight";
+      t.parentNode.insertBefore(before,t); span.appendChild(mid);
+      t.parentNode.insertBefore(span,t); t.parentNode.insertBefore(after,t);
+      t.parentNode.removeChild(t); return span;
     }
-  });
-  observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+  }
+  return null;
 }
 
-// --- Key point extraction (lightweight TextRank-ish scoring) ---
-function sentenceSplit(text) {
-  return text
-    .replace(/\s+/g, " ")
-    .split(/(?<=[.!?])\s+(?=[A-Z0-9\[\(\"'])/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0 && /[a-zA-Z]/.test(s));
+// ---------- Offline heuristic mode ----------
+function offlineScoreClaim(s){
+  let score=55; const reasons=[];
+  if(/\baccording to\b/i.test(s)){score+=10;reasons.push("cites a source");}
+  if(/\b(study|report|dataset|meta[- ]analysis)\b/i.test(s)){score+=6;reasons.push("mentions research/data");}
+  if(/\bexperts?\b/i.test(s)){score+=3;reasons.push("mentions experts");}
+  if(/\b\d{1,3}(?:,\d{3})*(?:\.\d+)?%?\b/.test(s)){score+=4;reasons.push("uses concrete figures");}
+  if(/\b(19|20)\d{2}\b/.test(s)){score+=3;reasons.push("gives a specific year");}
+  if(/\b(shocking|miracle|exposed|guaranteed|secret|you won't believe|debunked)\b/i.test(s)){score-=14;reasons.push("sensational language");}
+  if(/[A-Z]{6,}/.test(s)){score-=6;reasons.push("excessive capitalization");}
+  if(/\b(only|always|never|every|prove)\b/i.test(s)){score-=5;reasons.push("absolute/framing language");}
+  score=Math.max(0,Math.min(100,score)); const label=score>=75?"High":score<=45?"Low":"Medium"; return {score,label,reasons};
 }
 
-function tokenize(s) {
-  return s.toLowerCase().replace(/[^a-z0-9\s-]/g, "").split(/\s+/).filter(Boolean);
-}
-
-// Simple importance: TF * position bonus * title overlap * proper noun count
-function extractKeyPoints(root, count=5) {
-  const title = (document.querySelector("meta[property='og:title']")?.content ||
-                 document.title || "").trim();
-  const titleTokens = new Set(tokenize(title));
-
-  const text = extractCleanText(root);
-  const sents = sentenceSplit(text);
-  if (!sents.length) return [];
-
-  const tf = Object.create(null);
-  const allTokens = tokenize(text);
-  for (const t of allTokens) tf[t] = (tf[t]||0)+1;
-
-  const scores = sents.map((s, i) => {
-    const toks = tokenize(s);
-    const len = Math.max(toks.length, 1);
-    const avgTF = toks.reduce((a,t)=>a+(tf[t]||0),0)/len;
-    const posBonus = 1 + (i === 0 ? 0.6 : (i < 3 ? 0.3 : 0)); // early sentences matter
-    // title overlap
-    const overlap = toks.reduce((a,t)=> a + (titleTokens.has(t) ? 1 : 0), 0) / len;
-    // crude proper noun count (words starting capital in original sentence)
-    const proper = (s.match(/\b[A-Z][a-z]+/g)||[]).length;
-    const properBonus = 1 + Math.min(proper, 4) * 0.05;
-    // downweight very short or very long sentences
-    const lenPenalty = (len < 6 || len > 40) ? 0.8 : 1;
-    const score = avgTF * posBonus * (1 + overlap) * properBonus * lenPenalty;
-    return { s, i, score };
-  });
-
-  scores.sort((a,b)=> b.score - a.score);
-  const top = scores.slice(0, count).sort((a,b)=> a.i - b.i).map(o => o.s);
-  return top;
-}
-
-function clearHighlights() {
-  document.querySelectorAll(".aar-highlight").forEach(el => {
-    const parent = el.parentNode;
-    while (el.firstChild) parent.insertBefore(el.firstChild, el);
-    parent.removeChild(el);
-  });
-}
-
-function highlightSentences(root, sentences) {
+async function analyzeOffline(){
   clearHighlights();
-  if (!sentences.length) return [];
-  const nodes = collectTextNodes(root);
-  const found = [];
-  for (const sentence of sentences) {
-    const needle = sentence.slice(0, 120); // partial match window
-    const re = new RegExp(reEscape(needle.replace(/\s+/g, " ")), "i");
-    let matched = false;
-    for (const n of nodes) {
-      const idx = n.nodeValue.replace(/\s+/g, " ").search(re);
-      if (idx >= 0) {
-        // split the text node to wrap highlight
-        const full = n.nodeValue;
-        const before = document.createTextNode(full.slice(0, idx));
-        const mid = document.createTextNode(full.slice(idx, idx + needle.length));
-        const after = document.createTextNode(full.slice(idx + needle.length));
-        const span = document.createElement("span");
-        span.className = "aar-highlight";
-        n.parentNode.insertBefore(before, n);
-        span.appendChild(mid);
-        n.parentNode.insertBefore(span, n);
-        n.parentNode.insertBefore(after, n);
-        n.parentNode.removeChild(n);
-        found.push({ element: span, text: sentence });
-        matched = true;
-        break;
-      }
-    }
-    if (!matched) {
-      // fallback: ignore if not found in one node; multi-node matching is complex
-    }
+  const root=getArticleRoot();
+  const claims=extractClaims(root);
+  const results=claims.map(c=>({claim:c, offline:offlineScoreClaim(c)}));
+  [...results].sort((a,b)=>a.offline.score-b.offline.score).slice(0,5).forEach(r=>highlightClaim(root,r.claim));
+  const avg=Math.round(results.reduce((a,r)=>a+r.offline.score,0)/Math.max(1,results.length));
+  const label=avg>=75?"High":avg<=45?"Low":"Medium";
+  const p=ensurePanel();
+  p.innerHTML=`<h3>Offline validation ${badge(label)} • ${avg}/100</h3>
+  <div class="cr-note"><small>Heuristic signals only (no internet). Use Online to investigate evidence.</small></div>
+  <ol class="cr-points">${results.slice(0,12).map(r=>`<li>${escapeHtml(r.claim)} <span class="cr-tag">${r.offline.score}/100</span><br><small>${escapeHtml(r.offline.reasons.join("; "))}</small></li>`).join("")}</ol>
+  <div class="cr-actions"><button class="cr-primary" id="cr-online">Investigate (Online)</button><button class="cr-ghost" id="cr-clear">Clear highlights</button></div>`;
+  p.querySelector("#cr-clear").onclick=()=>clearHighlights();
+  p.querySelector("#cr-online").onclick=()=>analyzeOnline(claims);
+}
+
+// ---------- Online investigator mode ----------
+async function analyzeOnline(existingClaims=null){
+  clearHighlights();
+  const root=getArticleRoot();
+  const claims=existingClaims || extractClaims(root);
+  const p=ensurePanel();
+  p.innerHTML=`<h3>Online investigation</h3><div class="cr-note"><small>Collecting evidence from CrossRef, PubMed, Reuters/AP, and .gov domains…</small></div>`;
+  const out=[];
+  for(const c of claims.slice(0,12)){
+    const r=await new Promise(res=>chrome.runtime.sendMessage({type:"INVESTIGATE", query:c},res));
+    const evidence=(r&&r.ok&&r.evidence)||[];
+    const evaln=scoreFromEvidence(c, evidence);
+    out.push({claim:c, evidence, ...evaln});
   }
-  return found;
+  const avg=Math.round(out.reduce((a,r)=>a+r.score,0)/Math.max(1,out.length));
+  const label=avg>=75?"High":avg<=45?"Low":"Medium";
+  const items=out.map(r=>{
+    const srcs=r.evidence.slice(0,5).map(s=>`<a class="cr-source" href="${s.url}" target="_blank">${escapeHtml(s.source)}: ${escapeHtml(s.title)}</a>`).join("");
+    return `<li>${escapeHtml(r.claim)} <span class="cr-tag">${r.score}/100</span> ${badge(r.label)}<br>
+      <small>${escapeHtml(r.reasons.join("; ")||"Evidence collected.")}</small><br>${srcs}</li>`;
+  }).join("");
+  p.innerHTML=`<h3>Online investigation ${badge(label)} • ${avg}/100</h3>
+  <div class="cr-note"><small>Scores reflect corroboration/contradiction across trusted primary sources.</small></div>
+  <ol class="cr-points">${items}</ol>
+  <div class="cr-actions"><button class="cr-ghost" id="cr-clear">Clear highlights</button></div>`;
+  p.querySelector("#cr-clear").onclick=()=>clearHighlights();
+
+  // Emphasize non-High
+  out.filter(r=>r.label!=="High").slice(0,5).forEach(r=>highlightClaim(root,r.claim));
 }
 
-function reEscape(s){return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");}
-
-// --- Credibility checks (heuristics only; no external calls) ---
-function credibilityReport(root) {
-  const url = new URL(location.href);
-  const https = (url.protocol === "https:");
-  const byline = !!(document.querySelector("[itemprop='author'], [rel='author'], .byline, .author, meta[name='author']"));
-  const dateMeta = document.querySelector("time[datetime], meta[property='article:published_time'], meta[name='date'], meta[name='pubdate']");
-  const hasDate = !!dateMeta;
-  // external references: links to other domains within main
-  const links = Array.from(root.querySelectorAll("a[href]"));
-  const externalLinks = links.filter(a => {
-    try { const u = new URL(a.href, location.href); return u.hostname && u.hostname !== location.hostname; } catch { return false; }
-  });
-  const externalCount = externalLinks.length;
-
-  // ads density heuristic: elements with ad-like classes
-  const adEls = root.querySelectorAll("[class*='ad'], [id*='ad'], [class*='sponsor']");
-  const textLen = extractCleanText(root).length;
-  const adDensity = adEls.length / Math.max(1, textLen/1000);
-
-  // sensational/clickbait cues
-  const text = extractCleanText(root);
-  const sensational = /shocking|won't believe|exposed|secret[s]?|miracle|guaranteed|outrage|destroy[s]?|game[- ]changer|jaw[- ]dropping|one weird trick/i.test(text);
-  const excessiveCaps = /[A-Z]{6,}/.test(text);
-
-  // quotes / named sources
-  const hasQuotes = /“.+?”|\".+?\"/.test(text) || /according to|said|stated|reported/i.test(text);
-
-  // reading level roughness: average sentence length
-  const sentences = sentenceSplit(text);
-  const words = text.split(/\s+/).filter(Boolean);
-  const avgSentLen = sentences.length ? words.length / sentences.length : words.length;
-
-  // signals combine into score
-  let score = 50;
-  if (https) score += 5;
-  if (byline) score += 10; else score -= 8;
-  if (hasDate) score += 6; else score -= 6;
-  if (externalCount >= 3) score += 10; else if (externalCount === 0) score -= 6;
-  if (adDensity > 4) score -= 12; else if (adDensity > 2) score -= 6;
-  if (sensational || excessiveCaps) score -= 10;
-  if (hasQuotes) score += 6;
-  if (avgSentLen > 45 || avgSentLen < 6) score -= 5; // very odd style
-  score = Math.min(100, Math.max(0, Math.round(score)));
-
-  let label = "Medium";
-  if (score >= 75) label = "High";
-  else if (score <= 45) label = "Low";
-
-  return {
-    score, label,
-    signals: {
-      https, byline, hasDate, externalReferences: externalCount,
-      adDensity: Number(adDensity.toFixed(2)),
-      sensational, excessiveCaps, hasQuotes, avgSentLen: Number(avgSentLen.toFixed(1))
-    }
-  };
-}
-
-// --- Panel UI ---
-function ensurePanel() {
-  let panel = document.querySelector(".aar-panel");
-  if (panel) return panel;
-  panel = document.createElement("div");
-  panel.className = "aar-panel";
-  document.body.appendChild(panel);
-  return panel;
-}
-
-function renderPanel({ keyPoints, report }) {
-  const panel = ensurePanel();
-
-const items = report.factors.map(f => `<li><strong>${escapeHtml(f.name)}</strong><br>
-  <small>${escapeHtml(f.rationale)}</small><br>
-  <small><em>Indicator:</em> ${typeof f.indicator === 'boolean' ? (f.indicator ? 'yes' : 'no') : escapeHtml(String(f.indicator))} •
-  <em>Impact:</em> ${f.scoreDelta > 0 ? '+' : ''}${f.scoreDelta}/${f.maxImpact}</small></li>`).join("");
-const list = `<ol class="aar-points">${items}</ol>`;
-panel.innerHTML = `
-  <h3>Page analysis</h3>
-  <div class="aar-meta">
-    <span>Credibility:</span>
-    <span class="aar-badge ${report.label.toLowerCase()}">${report.label} • ${report.score}/100</span>
-  </div>
-  <div><strong>Why this score</strong></div>
-  ${list}
-  <div style="margin-top:8px;"><strong>Key points</strong></div>
-  <ol class="aar-points">${keyPoints.map(p=>`<li>${escapeHtml(p)}</li>`).join("")}</ol>
-  <div class="aar-actions">
-    <button class="primary" id="aar-read-points">Read key points</button>
-    <button class="ghost" id="aar-clear">Clear highlights</button>
-  </div>
-`;
-
-  panel.querySelector("#aar-clear").onclick = () => clearHighlights();
-  panel.querySelector("#aar-read-points").onclick = async () => {
-    await loadSettings();
-    const text = keyPoints.join(". ");
-    stopSpeaking();
-    queue = chunk(text, SETTINGS.maxChunkChars);
-    speakNext();
-  };
-}
-
-function escapeHtml(s){return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-
-// --- Analyze workflow ---
-async function analyzeAndHighlight() {
-  await loadSettings();
-  const root = getMainRoot();
-  const keyPoints = extractKeyPoints(root, SETTINGS.keyPointCount);
-  highlightSentences(root, keyPoints);
-  const report = credibilityScoreDetailed(root);
-  renderPanel({ keyPoints, report });
-}
-
-// --- Messages ---
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "READ_SELECTION") readSelection();
-  if (msg.type === "READ_MAIN") readMain();
-  if (msg.type === "PAUSE_RESUME") pauseResume();
-  if (msg.type === "STOP") stopSpeaking();
-  if (msg.type === "SETTINGS_UPDATED") loadSettings();
-  if (msg.type === "ANALYZE") analyzeAndHighlight();
+// ---------- Messages & Popup triggers ----------
+chrome.runtime.onMessage.addListener((msg)=>{
+  if (msg.type==="ANALYZE_OFFLINE") analyzeOffline();
+  if (msg.type==="ANALYZE_ONLINE") analyzeOnline();
 });
-
-// --- Detailed credibility scoring ---
-// Each factor returns {scoreDelta, maxImpact, rationale, indicator}
-// Score starts at 50 and is clamped to [0,100].
-function credibilityScoreDetailed(root) {
-  const url = new URL(location.href);
-  const text = extractCleanText(root);
-
-  const factors = [];
-
-  // 1) Protocol (HTTPS)
-  const https = (url.protocol === "https:");
-  factors.push({
-    name: "Secure protocol (HTTPS)",
-    indicator: https,
-    scoreDelta: https ? +5 : -5,
-    maxImpact: 5,
-    rationale: https ?
-      "Page is served over HTTPS, which helps protect content integrity." :
-      "Page is not served over HTTPS; content could be intercepted or altered."
-  });
-
-  // 2) Author/byline presence
-  const bylineEl = document.querySelector("[itemprop='author'], [rel='author'], .byline, .author, meta[name='author']");
-  const byline = !!bylineEl;
-  factors.push({
-    name: "Identified author/byline",
-    indicator: byline,
-    scoreDelta: byline ? +12 : -10,
-    maxImpact: 12,
-    rationale: byline ?
-      "An author/byline is present, increasing accountability." :
-      "No author/byline detected, reducing accountability."
-  });
-
-  // 3) Publication date
-  const dateMeta = document.querySelector("time[datetime], meta[property='article:published_time'], meta[name='date'], meta[name='pubdate']");
-  const hasDate = !!dateMeta;
-  factors.push({
-    name: "Publication date available",
-    indicator: hasDate,
-    scoreDelta: hasDate ? +8 : -6,
-    maxImpact: 8,
-    rationale: hasDate ?
-      "A publication date is provided; this aids recency verification." :
-      "No clear publication date was found."
-  });
-
-  // 4) External references/citations
-  const links = Array.from(root.querySelectorAll("a[href]"));
-  const externalLinks = links.filter(a => {
-    try { const u = new URL(a.href, location.href); return u.hostname && u.hostname !== location.hostname; } catch { return false; }
-  });
-  const externalCount = externalLinks.length;
-  let extDelta = 0, extRationale = "";
-  if (externalCount >= 5) { extDelta = +12; extRationale = `Many external references detected (${externalCount}).`; }
-  else if (externalCount >= 3) { extDelta = +8; extRationale = `Several external references detected (${externalCount}).`; }
-  else if (externalCount >= 1) { extDelta = +3; extRationale = `Few external references detected (${externalCount}).`; }
-  else { extDelta = -6; extRationale = "No external references detected."; }
-  factors.push({
-    name: "External references/citations",
-    indicator: externalCount,
-    scoreDelta: extDelta,
-    maxImpact: 12,
-    rationale: extRationale
-  });
-
-  // 5) Ad density around the main content
-  const adEls = root.querySelectorAll("[class*='ad'], [id*='ad'], [class*='sponsor']");
-  const textLen = text.length;
-  const adDensity = adEls.length / Math.max(1, textLen/1000);
-  let adDelta = 0, adRationale = "";
-  if (adDensity <= 0.5) { adDelta = +6; adRationale = `Low ad density (~${adDensity.toFixed(2)} per 1000 chars).`; }
-  else if (adDensity <= 2) { adDelta = 0; adRationale = `Moderate ad density (~${adDensity.toFixed(2)} per 1000 chars).`; }
-  else if (adDensity <= 4) { adDelta = -6; adRationale = `High ad density (~${adDensity.toFixed(2)} per 1000 chars).`; }
-  else { adDelta = -12; adRationale = `Very high ad density (~${adDensity.toFixed(2)} per 1000 chars).`; }
-  factors.push({
-    name: "Ad density (content area)",
-    indicator: Number(adDensity.toFixed(2)),
-    scoreDelta: adDelta,
-    maxImpact: 12,
-    rationale: adRationale
-  });
-
-  // 6) Sensational language / excessive capitalization
-  const sensational = /shocking|won't believe|exposed|secret[s]?|miracle|guaranteed|outrage|destroy[s]?|game[- ]changer|jaw[- ]dropping|one weird trick/i.test(text);
-  const excessiveCaps = /[A-Z]{6,}/.test(text);
-  const sensHit = (sensational ? -6 : 0) + (excessiveCaps ? -4 : 0);
-  factors.push({
-    name: "Sensational or clickbait language",
-    indicator: Boolean(sensational || excessiveCaps),
-    scoreDelta: sensHit,
-    maxImpact: 10,
-    rationale: sensational || excessiveCaps ?
-      "Detected clickbait/sensational cues (e.g., hype phrases or long ALL‑CAPS runs)." :
-      "No strong clickbait cues detected."
-  });
-
-  // 7) Quotations / sourcing phrases
-  const hasQuotes = /“.+?”|\".+?\"/.test(text) || /according to|said|stated|reported|cited/i.test(text);
-  factors.push({
-    name: "Quotations or sourcing language",
-    indicator: hasQuotes,
-    scoreDelta: hasQuotes ? +6 : 0,
-    maxImpact: 6,
-    rationale: hasQuotes ? "Attribution/quotes suggest sourcing is provided." : "Few/no cues of direct attribution detected."
-  });
-
-  // 8) Readability sanity (avg sentence length)
-  const sentences = sentenceSplit(text);
-  const words = text.split(/\s+/).filter(Boolean);
-  const avgSentLen = sentences.length ? words.length / sentences.length : words.length;
-  let readDelta = 0, readRationale = "";
-  if (avgSentLen >= 10 && avgSentLen <= 35) { readDelta = +3; readRationale = `Readable average sentence length (${avgSentLen.toFixed(1)} words).`; }
-  else { readDelta = -3; readRationale = `Atypical sentence length (${avgSentLen.toFixed(1)} words).`; }
-  factors.push({
-    name: "Readability (avg sentence length)",
-    indicator: Number(avgSentLen.toFixed(1)),
-    scoreDelta: readDelta,
-    maxImpact: 3,
-    rationale: readRationale
-  });
-
-  // Sum score and clamp
-  let score = 50;
-  for (const f of factors) score += f.scoreDelta;
-  score = Math.min(100, Math.max(0, Math.round(score)));
-  let label = "Medium";
-  if (score >= 75) label = "High";
-  else if (score <= 45) label = "Low";
-
-  return { score, label, factors };
-}
-
