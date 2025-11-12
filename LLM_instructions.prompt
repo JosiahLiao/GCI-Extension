@@ -19,9 +19,9 @@ INSTRUCTIONS:
 
 EXPECTED OUTPUT FORMAT:
 - Overall accuracy score (0-100%)
-- Identified inaccuracies with corrections
-- Explanation for corrections
-- Reputable sources used to support corrections
+- Fully quote text containing inaccurate information
+- Explanation for flagged inaccuracies
+- Reputable sources used to support flagged inaccuracies
 - Confidence level for each evaluation (high/medium/low)
 
 LIMITATIONS:
