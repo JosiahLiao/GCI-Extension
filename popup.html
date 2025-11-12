@@ -1,10 +1,85 @@
 
 <!doctype html>
 <html><head><meta charset="utf-8"><title>Credible Reader</title>
-<style>body{font-family:system-ui,Arial;margin:12px;width:360px}button{width:100%;padding:10px;margin:6px 0}p{color:#7a8596}</style>
-</head><body>
-<button id="offline">Validate (Offline)</button>
-<button id="online">Investigate (Online)</button>
-<p><small>Manual mode. No Wikipedia; uses primary sources (gov/academic/wire services).</small></p>
-<script src="popup.js"></script>
+<style>
+    body{font-family:system-ui,Arial;margin:12px;width:360px}button{width:100%;padding:10px;margin:6px 0}p{color:#7a8596}
+    h3{
+      font-size: 18px;
+      margin: 5px 0 15px 0;
+      color: rgb(84, 107, 75);
+    }
+    .icon-btn{
+      background-color: rgb(179, 253, 129);
+      color: white;
+      text-shadow: /* text outline*/
+        -1px -1px 0 black,  /* Top-left shadow */
+        1px -1px 0 black,   /* Top-right shadow */
+        -1px 1px 0 black,   /* Bottom-left shadow */
+        1px 1px 0 black;    /* Bottom-right shadow */
+      text-align: center;
+      font-size: 24px;
+      cursor: pointer;
+      border: 1px black solid; 
+      border-radius: 8px; 
+      font-family: 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
+    }
+    .icon-checkbox{
+      cursor: pointer;
+      font-family: 'Lucida Grande', 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
+      font-size: 16px;
+      color: black;
+      accent-color: rgb(179, 253, 129);
+      margin-left: 2.5%;
+    }
+    .dropdown{
+      margin-bottom: 15px;
+      text-align: center;
+    }
+    #select{ /* contains checkbox options */
+      font-family: 'Lucida Grande', 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
+      font-size: 16px;
+      background-color: rgb(223, 240, 201);
+      border-radius: 8px;
+      padding: 2px;
+      cursor: pointer;
+    }
+    #currentWebsite{ /* display for current website name */
+      font-size: 20px;
+      font-family: 'Lucida Grande', 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
+      color: rgb(82, 100, 80);
+      text-align: center;
+      border: 0.5px rgb(136, 170, 136) solid;
+      padding: 10px;
+      border-radius: 20px;
+      margin: 2% 20% 2% 20%;
+      background-color: rgb(202, 255, 167);
+    }
+</style>
+</head>
+<body style = "background-color: rgb(239, 252, 222)">
+    <img src = "TruthForge logo.png" alt = "TruthForge Logo" style = "display: block; margin: 0 auto; width: 70%; height: auto;">
+    
+    <!-- Get current website name -->
+    <p id = "currentWebsite">www.google.com</p>
+
+    <label class = "icon-checkbox"><input id="allowScreenReading" type="checkbox"> Allow screen reading on this website</label><br>
+    <label class = "icon-checkbox"><input id="viewAcceptedWebsites" type="checkbox"> View accepted websites</label><br>
+    <label class = "icon-checkbox"><input id="allowAutomaticRun" type="checkbox"> Allow automatic run for accepted websites</label>
+
+    <!-- Change screen reader type-->
+    <div class="dropdown">
+        <p style = "color: rgb(162, 201, 147)">_____________________________________________________</p>
+        <h3>Change Scan Option</h3>
+        <div class="styled-select">
+        <select id="select" name="select">
+            <option value="Scan Accepted Sites Automatically">Scan Accepted Sites Automatically</option> 
+            <option value="Scan Current Site Manually">Scan Current Site Manually</option> 
+            <option value="Ask Permission For All Sites">Ask Permission For All Sites</option>
+        </select>
+        </div>
+    </div>
+    <button id="offline">Validate (Offline)</button>
+    <button id="online">Investigate (Online)</button>
+    <p><small>Manual mode. No Wikipedia; uses primary sources (gov/academic/wire services).</small></p>
+    <script src="popup.js"></script>
 </body></html>

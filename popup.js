@@ -12,3 +12,22 @@ function send(type){
 }
 document.getElementById('offline').onclick = ()=> send('ANALYZE_OFFLINE');
 document.getElementById('online').onclick = ()=> send('ANALYZE_ONLINE');
+
+//Gets current website name and sends it to popup.html 
+   const websiteEl = document.getElementById("currentWebsite");
+
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (!tab || !tab.url) {
+      websiteEl.textContent = "Unable to detect website";
+      return;
+    }
+
+    try {
+      const url = new URL(tab.url);
+      websiteEl.textContent = url.hostname;
+      websiteEl.title = url.href;
+    } catch (e) {
+      websiteEl.textContent = "Invalid URL";
+    }
+  });
