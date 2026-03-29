@@ -1,0 +1,23 @@
+body {
+  font-family: sans-serif;
+  width: 300px;
+  padding: 10px;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+}
+
+#output {
+  white-space: pre-wrap;
+  background-color: #f0f0f0;
+  padding: 10px;
+  border-radius: 5px;
+}

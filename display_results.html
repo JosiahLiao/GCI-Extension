@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>AI Results</title>
+  <link rel="stylesheet" type="text/css" href="style.css">
+  <style>
+    body {
+      width: 400px;
+      padding: 15px;
+      font-family: Arial, sans-serif;
+    }
+    h1 {
+      color: #333;
+      font-size: 1.5em;
+      margin-bottom: 15px;
+    }
+    .score {
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+    .inaccuracy-item {
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin-bottom: 10px;
+      border-radius: 5px;
+      background-color: #f9f9f9;
+    }
+    .inaccuracy-item p {
+      margin: 0 0 5px 0;
+    }
+    .inaccuracy-item strong {
+      color: #555;
+    }
+    .sources-list {
+      list-style-type: disc;
+      margin-left: 20px;
+      padding: 0;
+    }
+    .sources-list li {
+      margin-bottom: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h1>AI Content Validation Results</h1>
+  <div id="overallScore" class="score"></div>
+  <div id="inaccuraciesContainer"></div>
+
+  <script type="module" src="display_results.js"></script>
+</body>
+</html>
