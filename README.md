@@ -1,5 +1,7 @@
 # GCI-Extension
 
+## Warning: This is a deprecated version! Navigate to the updated-version branch for instructions and source code for the current version! 
+
 ## How to Run Chrome Extension
 - Download source code and unzip into a folder
 - In the Chrome browser, click the extensions button and navigate to `Manage Extensions`
