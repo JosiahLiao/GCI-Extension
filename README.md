@@ -11,3 +11,6 @@
 
 ## LLM Output Format
 Output format for text file is given in `LLM_instructions.prompt`
+
+## Warning
+This extension is in progress, and as such is missing some features. Updates are coming soon, thanks for your patience!
