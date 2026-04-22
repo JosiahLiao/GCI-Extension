@@ -30,12 +30,19 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   extractAndSendButton.addEventListener('click', () => {
+    console.log("Extract and Send button clicked");
     outputDiv.innerText = 'Processing...';
     
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       chrome.scripting.executeScript({
         target: { tabId: tabs[0].id },
         files: ['content.js']
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("Script injection failed:", chrome.runtime.lastError.message);
+        } else {
+          console.log("content.js injected successfully");
+        }
       });
     });
   });

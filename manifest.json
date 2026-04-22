@@ -22,7 +22,7 @@
     }
   },
   "background": {
-    "service_worker": "dist/background.bundle.js",
+    "service_worker": "background.js",
     "type": "module"
   },
   "icons": {

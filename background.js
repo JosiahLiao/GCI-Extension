@@ -29,6 +29,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'processText') {
     const extractedText = request.data;
+    console.log("Extracted text in background:", extractedText);
     
     // Get API key from storage
     chrome.storage.sync.get('apiKey', (data) => {
