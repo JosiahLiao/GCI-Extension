@@ -3,14 +3,71 @@
 <head>
   <title>AI Text Extractor</title>
   <link rel="stylesheet" type="text/css" href="style.css">
+  <style>
+    .settings-section {
+      margin-top: 15px;
+      padding-top: 10px;
+      border-top: 1px solid #ddd;
+    }
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .checkbox-group label {
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #acceptedWebsitesList {
+      margin-top: 10px;
+      max-height: 150px;
+      overflow-y: auto;
+      font-size: 12px;
+      border: 1px solid #eee;
+      padding: 5px;
+      display: none;
+    }
+    .website-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 3px 0;
+      border-bottom: 1px solid #f9f9f9;
+    }
+    .remove-website {
+      color: #dc3545;
+      cursor: pointer;
+      font-weight: bold;
+      padding: 0 5px;
+    }
+    .toggle-link {
+      color: #007bff;
+      cursor: pointer;
+      font-size: 12px;
+      text-decoration: underline;
+    }
+  </style>
 </head>
 <body>
   <div class="container">
     <h1>AI Text Extractor</h1>
-    <div class="input-group">
-      <label for="apiKey">OpenAI API Key:</label>
-      <input type="password" id="apiKey" placeholder="Enter your API key">
+    
+    <div class="settings-section">
+      <div class="checkbox-group">
+        <input type="checkbox" id="allowOnWebsite">
+        <label for="allowOnWebsite">Allow on this website</label>
+      </div>
+      
+      <div class="checkbox-group">
+        <input type="checkbox" id="runAutomatically">
+        <label for="runAutomatically">Run automatically on accepted websites</label>
+      </div>
+
+      <div class="toggle-link" id="toggleWebsites">View all accepted websites</div>
+      <div id="acceptedWebsitesList"></div>
     </div>
+
     <button id="extractAndSend">Extract, Send, and Display</button>
 
     <h2>AI Result</h2>

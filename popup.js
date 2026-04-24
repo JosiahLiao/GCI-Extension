@@ -1,86 +1,128 @@
-import { z } from "./lib/zod/v4/index.js";
-
-const Inaccuracy = z.object({
-  quoted_text: z.string(),
-  explanation: z.string(),
-  sources: z.array(z.string()),
-  confidence_level: z.string()
-});
-
-const TextEvaluation = z.object({
-  overall_accuracy_score: z.number(),
-  flagged_inaccuracies: z.array(Inaccuracy)
-});
-
 document.addEventListener('DOMContentLoaded', () => {
-  const apiKeyInput = document.getElementById('apiKey');
   const extractAndSendButton = document.getElementById('extractAndSend');
   const outputDiv = document.getElementById('output');
+  const allowOnWebsiteCheckbox = document.getElementById('allowOnWebsite');
+  const runAutomaticallyCheckbox = document.getElementById('runAutomatically');
+  const toggleWebsitesLink = document.getElementById('toggleWebsites');
+  const acceptedWebsitesList = document.getElementById('acceptedWebsitesList');
 
-  // Load saved API key
-  chrome.storage.sync.get('apiKey', (data) => {
-    if (data.apiKey) {
-      apiKeyInput.value = data.apiKey;
+  let currentDomain = "";
+
+  function getDomain(url) {
+    try {
+      const urlObj = new URL(url);
+      return urlObj.hostname;
+    } catch (e) {
+      return "";
     }
-  });
+  }
 
-  // Save API key
-  apiKeyInput.addEventListener('change', () => {
-    chrome.storage.sync.set({ apiKey: apiKeyInput.value });
-  });
-
-  extractAndSendButton.addEventListener('click', () => {
-    console.log("Extract and Send button clicked");
-    outputDiv.innerText = 'Processing...';
+  // Load saved settings
+  chrome.storage.sync.get(['acceptedWebsites', 'runAutomatically'], (data) => {
+    if (data.runAutomatically) runAutomaticallyCheckbox.checked = data.runAutomatically;
+    
+    const acceptedWebsites = data.acceptedWebsites || [];
     
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      chrome.scripting.executeScript({
-        target: { tabId: tabs[0].id },
-        files: ['content.js']
-      }, () => {
-        if (chrome.runtime.lastError) {
-          console.error("Script injection failed:", chrome.runtime.lastError.message);
+      if (tabs[0]) {
+        currentDomain = getDomain(tabs[0].url);
+        if (currentDomain) {
+          allowOnWebsiteCheckbox.checked = acceptedWebsites.includes(currentDomain);
         } else {
-          console.log("content.js injected successfully");
+          allowOnWebsiteCheckbox.disabled = true;
         }
+      }
+      updateWebsitesList(acceptedWebsites);
+    });
+  });
+
+  // Handle "Allow on this website" checkbox
+  allowOnWebsiteCheckbox.addEventListener('change', () => {
+    if (!currentDomain) return;
+    
+    chrome.storage.sync.get(['acceptedWebsites'], (data) => {
+      let acceptedWebsites = data.acceptedWebsites || [];
+      if (allowOnWebsiteCheckbox.checked) {
+        if (!acceptedWebsites.includes(currentDomain)) {
+          acceptedWebsites.push(currentDomain);
+        }
+      } else {
+        acceptedWebsites = acceptedWebsites.filter(domain => domain !== currentDomain);
+      }
+      chrome.storage.sync.set({ acceptedWebsites }, () => {
+        updateWebsitesList(acceptedWebsites);
       });
     });
   });
 
-  // Listen for messages from the background script
-  chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
-    if (request.action === 'displayResult') {
-      try {
-        const parsedData = JSON.parse(request.data);
-        const validatedData = TextEvaluation.parse(parsedData); // Zod validation
+  // Handle "Run automatically" checkbox
+  runAutomaticallyCheckbox.addEventListener('change', () => {
+    chrome.storage.sync.set({ runAutomatically: runAutomaticallyCheckbox.checked });
+  });
 
-        // Store validated data in chrome.storage.local for the new popup to access
-        await chrome.storage.local.set({ llmValidatedData: validatedData });
+  // Toggle websites list
+  toggleWebsitesLink.addEventListener('click', () => {
+    const isHidden = acceptedWebsitesList.style.display === 'none' || !acceptedWebsitesList.style.display;
+    acceptedWebsitesList.style.display = isHidden ? 'block' : 'none';
+    toggleWebsitesLink.innerText = isHidden ? 'Hide accepted websites' : 'View all accepted websites';
+  });
 
-        // Open the new popup window
-        chrome.windows.create({
-          url: chrome.runtime.getURL('display_results.html'),
-          type: 'popup',
-          width: 450,
-          height: 600,
-        });
-
-        // Optionally close the current popup or clear its content
-        window.close(); // Close the current popup
-
-      } catch (e) {
-        console.error("Error processing API response:", e); // Log the full error
-        console.log('Error type:', typeof e);
-        if (e instanceof z.ZodError) {
-          outputDiv.innerText = `Zod Validation Error: ${e.message}`; // Display the main error message
-        } else {
-          outputDiv.innerText = `Error parsing API response: ${request.data}. Detail: ${e.message}`;
-        }
-      }
-
-    } else if (request.action === 'error') {
-      outputDiv.innerText = `Error: ${request.data}`;
-
+  function updateWebsitesList(websites) {
+    acceptedWebsitesList.innerHTML = '';
+    if (websites.length === 0) {
+      acceptedWebsitesList.innerHTML = '<div style="padding: 5px; color: #666;">No accepted websites yet.</div>';
+      return;
     }
+    
+    websites.forEach(domain => {
+      const item = document.createElement('div');
+      item.className = 'website-item';
+      item.innerHTML = `
+        <span>${domain}</span>
+        <span class="remove-website" data-domain="${domain}">&times;</span>
+      `;
+      acceptedWebsitesList.appendChild(item);
+    });
+
+    acceptedWebsitesList.querySelectorAll('.remove-website').forEach(btn => {
+      btn.onclick = (e) => {
+        const domainToRemove = e.target.getAttribute('data-domain');
+        chrome.storage.sync.get(['acceptedWebsites'], (data) => {
+          const acceptedWebsites = (data.acceptedWebsites || []).filter(d => d !== domainToRemove);
+          chrome.storage.sync.set({ acceptedWebsites }, () => {
+            updateWebsitesList(acceptedWebsites);
+            if (domainToRemove === currentDomain) {
+              allowOnWebsiteCheckbox.checked = false;
+            }
+          });
+        });
+      };
+    });
+  }
+
+  extractAndSendButton.addEventListener('click', () => {
+    console.log("Extract and Send button clicked");
+    outputDiv.innerText = 'Processing... Results will appear as an overlay on the page.';
+    
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      chrome.scripting.executeScript({
+        target: { tabId: tabs[0].id },
+        func: () => {
+          if (window.truthForgeManualTrigger) {
+            window.truthForgeManualTrigger();
+          } else {
+            location.reload(); 
+          }
+        }
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("Script execution failed:", chrome.runtime.lastError.message);
+          outputDiv.innerText = "Error: Could not trigger extraction. Try refreshing the page.";
+        } else {
+          console.log("Extraction triggered successfully");
+          setTimeout(() => window.close(), 2000);
+        }
+      });
+    });
   });
 });

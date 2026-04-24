@@ -1,6 +1,8 @@
 let cachedInstructions = null;
 
-// Pre-fetch instructions at startup to reduce latency during the first call
+// The AWS API Gateway endpoint (Update this with your actual URL)
+const PROXY_URL = 'https://16z7cirb83.execute-api.us-east-2.amazonaws.com/dev/new-resource';
+
 async function getInstructions() {
   if (cachedInstructions) return cachedInstructions;
   try {
@@ -17,11 +19,9 @@ async function getInstructions() {
 }
 
 chrome.runtime.onStartup.addListener(() => {
-    console.log(`onStartup()`);
-    getInstructions(); // Initial fetch
+    getInstructions();
 });
 
-// Also fetch on installation or reload
 chrome.runtime.onInstalled.addListener(() => {
     getInstructions();
 });
@@ -29,83 +29,73 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'processText') {
     const extractedText = request.data;
-    console.log("Extracted text in background:", extractedText);
-    
-    // Get API key from storage
-    chrome.storage.sync.get('apiKey', (data) => {
-      if (!data.apiKey) {
-        chrome.runtime.sendMessage({ action: 'error', data: 'API key not set.' });
-        return;
-      }
-      const apiKey = data.apiKey;
+    const tabId = sender.tab.id;
 
-      (async () => {
-        try {
-          const instructions = await getInstructions();
+    (async () => {
+      try {
+        const instructions = await getInstructions();
 
-          // Speed up: Using gpt-4o-mini which is significantly faster than larger models
-          // while maintaining high reasoning capabilities for scientific validation.
-          const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-              model: "gpt-4o-mini", 
-              messages: [{
-                role: "system",
-                content: instructions
-              }, {
-                role: "user",
-                content: ("INPUT: " + extractedText)
-              }],
-              response_format: {
-                type: "json_schema",
-                json_schema: {
-                  name: "scientific_evaluation",
-                  strict: true,
-                  schema: {
-                    type: "object",
-                    properties: {
-                      overall_accuracy_score: { "type": "number" },
-                      flagged_inaccuracies: {
-                        type: "array",
-                        items: {
-                          type: "object",
-                          properties: {
-                            quoted_text: { "type": "string" },
-                            explanation: { "type": "string" },
-                            sources: { "type": "array", "items": { "type": "string" } },
-                            confidence_level: { "type": "string", "enum": ["high", "medium", "low"] }
-                          },
-                          required: ["quoted_text", "explanation", "sources", "confidence_level"],
-                          additionalProperties: false
-                        }
-                      }
-                    },
-                    required: ["overall_accuracy_score", "flagged_inaccuracies"],
-                    additionalProperties: false
-                  }
-                }
-              }
-            })
-          });
+        // Calling the AWS Proxy instead of OpenAI directly
+        const response = await fetch(PROXY_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            extractedText: extractedText,
+            instructions: instructions
+          })
+        });
 
-          if (!openaiResponse.ok) {
-            const errorData = await openaiResponse.json();
-            throw new Error(`OpenAI API error: ${openaiResponse.status} - ${errorData.error.message}`);
-          }
-
-          const result = await openaiResponse.json();
-          const LLM_out_text = result.choices[0].message.content;
-
-          chrome.runtime.sendMessage({ action: 'displayResult', data: LLM_out_text });
-        } catch (error) {
-          console.error("OpenAI API call failed: ", error);
-          chrome.runtime.sendMessage({ action: 'error', data: error.message });
+        if (!response.ok) {
+          const errorData = await response.json();
+          const detailedError = errorData.message || errorData.error || 'Unknown error';
+          throw new Error(`Proxy error: ${response.status} - ${detailedError}`);
         }
-      })();
-    });
+
+        let result = await response.json();
+        console.log("TruthForge: Received response:", result);
+
+        // Helper to find 'choices' anywhere in the object (handles unexpected nesting)
+        function findChoices(obj) {
+          if (obj && obj.choices) return obj.choices;
+          if (obj && obj.body && typeof obj.body === 'object' && obj.body.choices) return obj.body.choices;
+          if (obj && typeof obj.body === 'string') {
+            try {
+              const parsed = JSON.parse(obj.body);
+              if (parsed.choices) return parsed.choices;
+            } catch (e) {}
+          }
+          return null;
+        }
+
+        const choices = findChoices(result);
+
+        if (choices && choices[0] && choices[0].message) {
+          const LLM_out_text = choices[0].message.content;
+          try {
+            const parsedData = JSON.parse(LLM_out_text);
+            chrome.tabs.sendMessage(tabId, { action: 'showOverlay', data: parsedData });
+          } catch (e) {
+            console.error("TruthForge: Error parsing LLM output:", e);
+            chrome.tabs.sendMessage(tabId, { action: 'error', data: "Failed to parse validation results." });
+          }
+        } else {
+          // If we still can't find it, provide a very detailed error
+          const keys = Object.keys(result).join(', ');
+          console.error("TruthForge: Structure mismatch. Keys found:", keys, result);
+          
+          let errorHint = "The 'choices' field was not found in the response.";
+          if (result.error) errorHint = `OpenAI Error: ${result.error.message || JSON.stringify(result.error)}`;
+          else if (result.message === "Endpoint request timed out") errorHint = "AWS Gateway Timeout: Increase your Lambda timeout to 30 seconds.";
+          
+          throw new Error(`${errorHint} (Found keys: ${keys})`);
+        }
+
+      } catch (error) {
+        console.error("API call failed: ", error);
+        chrome.tabs.sendMessage(tabId, { action: 'error', data: error.message });
+      }
+    })();
   }
 });
