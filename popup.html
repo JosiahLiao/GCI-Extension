@@ -4,16 +4,22 @@
   <title>AI Text Extractor</title>
   <link rel="stylesheet" type="text/css" href="style.css">
   <style>
+    body{font-family:system-ui,Arial}
     .settings-section {
-      margin-top: 15px;
+      margin-top: 5px;
       padding-top: 10px;
       border-top: 1px solid #ddd;
     }
     .checkbox-group {
+      cursor: pointer;
+      font-family: 'Lucida Grande', 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
+      font-size: 16px;
+      color: black;
+      accent-color: rgb(179, 253, 129);
+      margin-left: 2.5%;
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-bottom: 8px;
     }
     .checkbox-group label {
       font-size: 13px;
@@ -24,9 +30,11 @@
       max-height: 150px;
       overflow-y: auto;
       font-size: 12px;
+      font-family: 'Lucida Grande', 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
       border: 1px solid #eee;
       padding: 5px;
       display: none;
+      background-color: rgb(202, 255, 167);
     }
     .website-item {
       display: flex;
@@ -42,16 +50,39 @@
       padding: 0 5px;
     }
     .toggle-link {
-      color: #007bff;
+      color: #22600c;
       cursor: pointer;
       font-size: 12px;
       text-decoration: underline;
     }
+    #currentWebsite{ /* display for current website name */
+      font-size: 20px;
+      font-family: 'Lucida Grande', 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
+      color: rgb(82, 100, 80);
+      text-align: center;
+      border: 0.5px rgb(136, 170, 136) solid;
+      padding: 3.5%;
+      border-radius: 20px;
+      margin: 1% auto;
+      background-color: rgb(202, 255, 167);
+      display: inline-block;
+      max-width: 90%;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    #output{
+      background-color: rgb(218, 234, 198);
+      color: rgb(82, 100, 80);
+      font-family: 'Lucida Grande', 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Sans', Arial, sans-serif, sans-serif, Arial, Helvetica;
+    }
   </style>
 </head>
-<body>
+<body style = "background-color: rgb(239, 252, 222)">
   <div class="container">
-    <h1>AI Text Extractor</h1>
+    <img src="TruthForgeSprites/TruthForge logo.png" alt = "TruthForge logo" style = "display: block; margin: 0 auto; padding-top: 5%; width: 70%; height: auto;">
+
+    <!-- Get current website name -->
+    <p id = "currentWebsite">www.google.com</p>
     
     <div class="settings-section">
       <div class="checkbox-group">
@@ -59,20 +90,23 @@
         <label for="allowOnWebsite">Allow on this website</label>
       </div>
       
-      <div class="checkbox-group">
+      <div class="checkbox-group" style="margin-bottom: 10px;">
         <input type="checkbox" id="runAutomatically">
         <label for="runAutomatically">Run automatically on accepted websites</label>
+        
       </div>
-
+     
       <div class="toggle-link" id="toggleWebsites">View all accepted websites</div>
       <div id="acceptedWebsitesList"></div>
     </div>
 
-    <button id="extractAndSend">Extract, Send, and Display</button>
+    <!--<button id="extractAndSend">Extract, Send, and Display</button>-->
+    <input type = "image" src = "TruthForgeSprites/Test credibility.png" alt = "Extract and Send" id = "extractAndSend" style = "width: 90%; height: auto; margin: auto; border: none; background: none; padding: 0; cursor: pointer;"></input>
 
-    <h2>AI Result</h2>
-    <div id="output"></div>
+    <div id="output">Click the button to start your analysis!</div>
+    
   </div>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>
